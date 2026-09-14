@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>База товаров / производства / заказов</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ===== Сайдбар ===== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span class="brand-text">mp<span class="accent">tracker</span></span>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-item is-active" data-tab="catalog">
+        <svg viewBox="0 0 24 24"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 0h7v7h-7v-7z"/></svg>
+        <span>Каталог / производство</span>
+      </button>
+      <button class="nav-item" data-tab="orderitems">
+        <svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4zm0 5l9 4 9-4M3 16l9 4 9-4"/></svg>
+        <span>Заказы</span>
+      </button>
+      <button class="nav-item" data-tab="articles">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        <span>По артикулам</span>
+      </button>
+      <button class="nav-item" data-tab="models">
+        <svg viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7l9-5z"/></svg>
+        <span>По моделям</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="foot-label">Источники</div>
+      <div id="sourcesList" class="sources-list">—</div>
+    </div>
+  </aside>
+
+  <!-- ===== Основная область ===== -->
+  <main class="main">
+
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1 id="pageTitle">Каталог / производство</h1>
+        <div class="topbar-sub">
+          Данные собраны: <span id="updatedAt" class="accent">—</span>
+          <span class="static-note">· статическая копия, обновляется вручную</span>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <div id="errorsBadge" class="badge badge-hidden" title="Ошибки последнего сбора данных"></div>
+      </div>
+    </header>
+
+    <section class="stats">
+      <div class="stat-card">
+        <div class="stat-label">Каталог</div>
+        <div id="statRecords" class="stat-value">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Заказов</div>
+        <div id="statOrderItems" class="stat-value">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Артикулов</div>
+        <div id="statArticles" class="stat-value">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Моделей</div>
+        <div id="statModels" class="stat-value">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Ошибок сбора</div>
+        <div id="statErrors" class="stat-value">0</div>
+      </div>
+    </section>
+
+    <!-- ===== Панель фильтров (общая, содержимое меняется под вкладку) ===== -->
+    <section class="filterbar" id="filterbar"></section>
+
+    <!-- ===== Таблица ===== -->
+    <section class="table-wrap">
+      <div class="table-scroll">
+        <table id="dataTable">
+          <thead id="tableHead"></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+      <div id="emptyState" class="empty-state hidden">Нет данных для отображения</div>
+    </section>
+
+    <div class="rowcount" id="rowCount"></div>
+  </main>
+</div>
+
+<!-- ===== Модалка деталей ===== -->
+<div id="modalOverlay" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="modal-title" id="modalTitle">Детали</span>
+      <button id="modalClose" class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-foot" id="modalFoot"></div>
+  </div>
+</div>
+
+<!-- ===== Тост уведомлений ===== -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
