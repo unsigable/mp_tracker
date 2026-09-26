@@ -257,7 +257,6 @@ svg{ width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 
 .links-list{ display:flex; flex-direction:column; gap:8px; }
 .link-row{ display:flex; align-items:center; gap:8px; }
 .link-row input{
-  flex: 1;
   background: var(--bg-input, #14181a);
   border: 1px solid var(--border-soft);
   color: var(--text);
@@ -265,12 +264,49 @@ svg{ width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 
   padding: 8px 10px;
   border-radius: var(--radius-sm);
 }
+.link-row input.link-input{ flex: 2; min-width: 0; }
+.link-row input.link-name-input{ flex: 1; min-width: 0; max-width: 200px; }
 .link-row input:focus{ outline:none; border-color: var(--green); }
 .link-row input.link-invalid{ border-color: var(--red); }
 .link-row-error{
   font-size: 11px;
   color: var(--red);
   margin: -4px 0 0 2px;
+}
+
+/* ---------- сортировка по клику на заголовок колонки (три состояния) ---------- */
+thead th{ cursor: pointer; user-select: none; white-space: nowrap; }
+thead th:hover{ color: var(--text); }
+thead th .sort-arrow{ margin-left: 5px; font-size: 9px; opacity: .5; }
+thead th.is-sorted .sort-arrow{ opacity: 1; color: var(--green); }
+
+/* ---------- "книжные" вкладки: переключение данных по разным ссылкам-источникам ---------- */
+.link-tabs{
+  display:flex; align-items:flex-end; justify-content:flex-end; flex-wrap: wrap;
+  gap: 3px;
+  padding: 0 10px;
+  min-height: 34px;
+  border-top: 1px solid var(--border-soft);
+  background: #141519;
+}
+.link-tabs.hidden{ display:none; }
+.link-tab{
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 7px 16px 6px;
+  border-radius: 9px 9px 0 0;
+  cursor: pointer;
+  transition: color .12s ease, background .12s ease;
+}
+.link-tab:hover{ color: var(--text); }
+.link-tab.is-active{
+  background: var(--green-soft);
+  color: var(--green);
+  border-color: rgba(52,217,122,.35);
 }
 .link-remove{
   flex: 0 0 auto;

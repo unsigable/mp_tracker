@@ -10,6 +10,40 @@
 const STATUS_COLOR_ORDER = ["green", "blue", "amber", "purple", "cyan", "pink", "red"];
 const statusColorCache = {};
 
+// Осмысленная (не хеш-случайная) подсветка для часто встречающихся
+// статусов -- в частности, для этапов маркировки/ЧЗ ("Завершено" и т.п.),
+// но применяется одинаково к любому status-подобному полю (см.
+// STATUS_LIKE_KEYS ниже), в т.ч. к обычному "status" каталога/заказов,
+// если там встретится такое же слово. Ключ -- статус в нижнем регистре;
+// проверяется сначала точное совпадение, затем вхождение подстроки (на
+// случай статуса вида "Не требуется (авто)"). Всё, чего нет в этом
+// списке, получает случайный, но ПОСТОЯННЫЙ цвет через хеш, как раньше.
+const STATUS_COLOR_MAP = {
+  "завершено": "green",
+  "выполнено": "green",
+  "готово": "green",
+  "отгружен": "green",
+  "промаркировано": "green",
+  "в работе": "blue",
+  "в процессе": "blue",
+  "взяли в работу": "blue",
+  "в очереди": "amber",
+  "не требуется": "grey",
+  "без маркировки": "grey",
+  "новый": "cyan",
+  "отменено": "red",
+  "отменен": "red",
+  "отменён": "red",
+  "ошибка": "red",
+};
+
+// Поля, которые отображаются цветным "pill", а не простым текстом (см.
+// cellHtml/openDetail). "status" -- каталог/заказы; остальные пять --
+// этапы раздела "Маркировка" (см. view_columns.MARKING_COLUMNS).
+const STATUS_LIKE_KEYS = new Set([
+  "status", "gtin_status", "cards_status", "km_status", "transgran_status", "barcode_status",
+]);
+
 let STATE = null;
 let ACTIVE_TAB = "catalog";
 let FILTERS = {
@@ -17,7 +51,17 @@ let FILTERS = {
   orderitems: { q: "", order: "Все", model: "Все" },
   articles: { q: "" },
   models: { q: "" },
+  marking: { q: "" },
+  shipments: { q: "" },
 };
+// Активная "книжная" вкладка-переключатель по ссылкам источника (см.
+// renderLinkTabs/baseDataFor) — отдельно для "orderitems" и "models",
+// поскольку это независимые сводки. "Все" — сводный вид без разбивки
+// (совпадает со старым поведением, когда у источника всего одна ссылка).
+const ACTIVE_LINK = { orderitems: "Все", models: "Все", articles: "Все", marking: "Все" };
+// Состояние сортировки по клику на заголовок колонки, отдельно на каждую
+// вкладку: {key, dir: "asc"|"desc"} или null (обычный, несортированный порядок).
+const SORT = { catalog: null, orderitems: null, articles: null, models: null };
 
 // ---------- утилиты ----------
 
@@ -35,6 +79,11 @@ function escapeHtml(s) {
 
 function colorForStatus(status) {
   if (!status) return "grey";
+  const key = String(status).trim().toLowerCase();
+  if (STATUS_COLOR_MAP[key]) return STATUS_COLOR_MAP[key];
+  for (const needle in STATUS_COLOR_MAP) {
+    if (key.includes(needle)) return STATUS_COLOR_MAP[needle];
+  }
   if (statusColorCache[status]) return statusColorCache[status];
   let hash = 0;
   for (let i = 0; i < status.length; i++) hash = (hash * 31 + status.charCodeAt(i)) >>> 0;
@@ -117,6 +166,8 @@ const TAB_TITLES = {
   orderitems: "Заказы",
   articles: "По артикулам",
   models: "По моделям",
+  marking: "Маркировка",
+  shipments: "Отгрузки",
 };
 
 function setActiveTab(tab) {
@@ -161,18 +212,20 @@ function renderFilterbar() {
   };
 
   if (ACTIVE_TAB === "catalog") {
+    const cat = STATE.records;
     addSearch("Поиск по каталогу…", (v) => (FILTERS.catalog.q = v), FILTERS.catalog.q);
-    addSelect("Статус", uniqueSorted(STATE.records.map((r) => r.status)), FILTERS.catalog.status,
+    addSelect("Статус", uniqueSorted(cat.map((r) => r.status)), FILTERS.catalog.status,
       (v) => (FILTERS.catalog.status = v));
-    addSelect("Модель", uniqueSorted(STATE.records.map((r) => r.model_name)), FILTERS.catalog.model,
+    addSelect("Модель", uniqueSorted(cat.map((r) => r.model_name)), FILTERS.catalog.model,
       (v) => (FILTERS.catalog.model = v));
-    addSelect("Ткань", uniqueSorted(STATE.records.map((r) => r.fabric_type)), FILTERS.catalog.fabric,
+    addSelect("Ткань", uniqueSorted(cat.map((r) => r.fabric_type)), FILTERS.catalog.fabric,
       (v) => (FILTERS.catalog.fabric = v));
   } else if (ACTIVE_TAB === "orderitems") {
+    const data = baseDataFor("orderitems");
     addSearch("Поиск по заказам…", (v) => (FILTERS.orderitems.q = v), FILTERS.orderitems.q);
-    addSelect("Заказ №", uniqueSorted(STATE.orders.map((o) => o.order_number)), FILTERS.orderitems.order,
+    addSelect("Заказ №", uniqueSorted(data.map((o) => o.order_number)), FILTERS.orderitems.order,
       (v) => (FILTERS.orderitems.order = v));
-    addSelect("Модель", uniqueSorted(STATE.orders.flatMap((o) => o.models || [])), FILTERS.orderitems.model,
+    addSelect("Модель", uniqueSorted(data.flatMap((o) => o.models || [])), FILTERS.orderitems.model,
       (v) => (FILTERS.orderitems.model = v));
     const hint = document.createElement("span");
     hint.className = "hint";
@@ -183,6 +236,18 @@ function renderFilterbar() {
     const hint = document.createElement("span");
     hint.className = "hint";
     hint.textContent = "показывает только артикулы, встретившиеся хотя бы в одном заказе";
+    bar.appendChild(hint);
+  } else if (ACTIVE_TAB === "shipments") {
+    addSearch("Поиск по отгрузкам…", (v) => (FILTERS.shipments.q = v), FILTERS.shipments.q);
+    const hint = document.createElement("span");
+    hint.className = "hint";
+    hint.textContent = "одна строка — одна отгрузка (совпадают дата и номер накладной)";
+    bar.appendChild(hint);
+  } else if (ACTIVE_TAB === "marking") {
+    addSearch("Поиск по маркировке…", (v) => (FILTERS.marking.q = v), FILTERS.marking.q);
+    const hint = document.createElement("span");
+    hint.className = "hint";
+    hint.textContent = "этапы Честного Знака по номеру заказа — отдельный вид данных, не каталог";
     bar.appendChild(hint);
   } else if (ACTIVE_TAB === "models") {
     addSearch("Поиск по моделям…", (v) => (FILTERS.models.q = v), FILTERS.models.q);
@@ -203,14 +268,49 @@ function columnsFor(tab) {
   if (tab === "orderitems") return STATE.meta.order_columns;
   if (tab === "articles") return STATE.meta.article_columns;
   if (tab === "models") return STATE.meta.model_columns;
+  if (tab === "marking") return STATE.meta.marking_columns;
+  if (tab === "shipments") return STATE.meta.shipment_columns;
+  return [];
+}
+
+// "Книжные" вкладки (см. README -> "Несколько ссылок/листов на один
+// источник"): для orderitems/models данные могут быть разбиты по тому,
+// из какой именно названной ссылки источника "Производство ТМ" они
+// произошли (см. collector._link_label / aggregate.bucket_order_items_by_link).
+// Возвращает исходный (ещё не отфильтрованный по поиску) массив строк —
+// либо сводный (STATE.orders/STATE.models), либо срез по одной ссылке.
+function baseDataFor(tab) {
+  if (tab === "catalog") return STATE.records;
+  if (tab === "marking") {
+    const label = ACTIVE_LINK.marking;
+    if (label === "Все" || !(STATE.marking_link_labels || []).length) return STATE.marking || [];
+    return (STATE.marking_by_link && STATE.marking_by_link[label]) || [];
+  }
+  if (tab === "shipments") return STATE.shipments || [];
+  if (tab === "articles") {
+    const label = ACTIVE_LINK.articles;
+    if (label === "Все" || !(STATE.article_link_labels || []).length) return STATE.articles;
+    return (STATE.articles_by_link && STATE.articles_by_link[label]) || [];
+  }
+  if (tab === "orderitems") {
+    const label = ACTIVE_LINK.orderitems;
+    if (label === "Все" || !(STATE.link_labels || []).length) return STATE.orders;
+    return (STATE.orders_by_link && STATE.orders_by_link[label]) || [];
+  }
+  if (tab === "models") {
+    const label = ACTIVE_LINK.models;
+    if (label === "Все" || !(STATE.link_labels || []).length) return STATE.models;
+    return (STATE.models_by_link && STATE.models_by_link[label]) || [];
+  }
   return [];
 }
 
 function rowsFor(tab) {
+  const data = baseDataFor(tab);
   if (tab === "catalog") {
     const f = FILTERS.catalog;
     const q = f.q.trim().toLowerCase();
-    return STATE.records.filter((r) => {
+    return data.filter((r) => {
       if (f.status !== "Все" && r.status !== f.status) return false;
       if (f.model !== "Все" && r.model_name !== f.model) return false;
       if (f.fabric !== "Все" && r.fabric_type !== f.fabric) return false;
@@ -222,9 +322,12 @@ function rowsFor(tab) {
     });
   }
   if (tab === "orderitems") {
+    // Фильтр/поиск работают ОДИНАКОВО независимо от того, какая "книжная"
+    // вкладка сейчас выбрана (см. baseDataFor выше) -- ничего не сбрасывается
+    // при переключении между ссылками.
     const f = FILTERS.orderitems;
     const q = f.q.trim().toLowerCase();
-    return STATE.orders.filter((o) => {
+    return data.filter((o) => {
       if (f.order !== "Все" && String(o.order_number) !== f.order) return false;
       if (f.model !== "Все" && !(o.models || []).includes(f.model)) return false;
       if (q) {
@@ -236,15 +339,31 @@ function rowsFor(tab) {
   }
   if (tab === "articles") {
     const q = FILTERS.articles.q.trim().toLowerCase();
-    return STATE.articles.filter((a) => {
+    return data.filter((a) => {
       if (!q) return true;
       const hay = STATE.meta.article_columns.map((c) => fmtValue(a[c.key])).join(" ").toLowerCase();
       return hay.includes(q);
     });
   }
+  if (tab === "shipments") {
+    const q = FILTERS.shipments.q.trim().toLowerCase();
+    return data.filter((r) => {
+      if (!q) return true;
+      const hay = STATE.meta.shipment_columns.map((c) => fmtValue(r[c.key])).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  if (tab === "marking") {
+    const q = FILTERS.marking.q.trim().toLowerCase();
+    return data.filter((r) => {
+      if (!q) return true;
+      const hay = STATE.meta.marking_columns.map((c) => fmtValue(r[c.key])).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+  }
   if (tab === "models") {
     const q = FILTERS.models.q.trim().toLowerCase();
-    return STATE.models.filter((m) => {
+    return data.filter((m) => {
       if (!q) return true;
       const hay = STATE.meta.model_columns.map((c) => fmtValue(m[c.key])).join(" ").toLowerCase();
       return hay.includes(q);
@@ -254,23 +373,109 @@ function rowsFor(tab) {
 }
 
 function cellHtml(key, value) {
-  if (key === "status") return statusPill(fmtValue(value));
+  if (STATUS_LIKE_KEYS.has(key)) {
+    const pill = statusPill(fmtValue(value));
+    return pill || '<span style="color:var(--text-faint)">—</span>';
+  }
   const s = fmtValue(value);
   return s === "" ? '<span style="color:var(--text-faint)">—</span>' : escapeHtml(s);
 }
 
+// ---------- сортировка по клику на заголовок (три состояния: по возрастанию/убыванию/обычный) ----------
+
+function onHeaderClick(tab, key) {
+  const cur = SORT[tab];
+  if (!cur || cur.key !== key) {
+    SORT[tab] = { key, dir: "asc" };
+  } else if (cur.dir === "asc") {
+    SORT[tab] = { key, dir: "desc" };
+  } else {
+    SORT[tab] = null; // третий клик — назад к обычному порядку
+  }
+  renderTable();
+}
+
+function applySort(rows, tab) {
+  const s = SORT[tab];
+  if (!s) return rows;
+  const dir = s.dir === "desc" ? -1 : 1;
+  // Индекс сохраняем, чтобы сортировка была устойчивой (стабильной) —
+  // строки с одинаковым значением не "перемешиваются" на каждый клик.
+  return rows
+    .map((row, i) => [row, i])
+    .sort((a, b) => {
+      let va = a[0][s.key];
+      let vb = b[0][s.key];
+      if (Array.isArray(va)) va = va.join(", ");
+      if (Array.isArray(vb)) vb = vb.join(", ");
+      const emptyA = va === null || va === undefined || va === "";
+      const emptyB = vb === null || vb === undefined || vb === "";
+      if (emptyA && emptyB) return a[1] - b[1];
+      if (emptyA) return 1; // пустые значения — всегда в конец, независимо от направления
+      if (emptyB) return -1;
+      const na = typeof va === "number" ? va : parseFloat(String(va).replace(",", "."));
+      const nb = typeof vb === "number" ? vb : parseFloat(String(vb).replace(",", "."));
+      const bothNumeric = !Number.isNaN(na) && !Number.isNaN(nb) && String(va).trim() !== "" && String(vb).trim() !== "";
+      if (bothNumeric) {
+        return (na - nb) * dir || a[1] - b[1];
+      }
+      return (String(va).localeCompare(String(vb), "ru") * dir) || a[1] - b[1];
+    })
+    .map((pair) => pair[0]);
+}
+
+// ---------- "книжные" вкладки переключения по ссылкам-источникам ----------
+
+function linkLabelsFor(tab) {
+  if (tab === "marking") return STATE.marking_link_labels || [];
+  if (tab === "articles") return STATE.article_link_labels || [];
+  if (tab === "orderitems" || tab === "models") return STATE.link_labels || [];
+  return [];
+}
+
+function renderLinkTabs() {
+  const bar = document.getElementById("linkTabs");
+  const labels = linkLabelsFor(ACTIVE_TAB);
+  const applicable = ACTIVE_TAB === "orderitems" || ACTIVE_TAB === "models"
+    || ACTIVE_TAB === "articles" || ACTIVE_TAB === "marking";
+  if (!applicable || !labels.length) {
+    bar.classList.add("hidden");
+    bar.innerHTML = "";
+    return;
+  }
+  bar.classList.remove("hidden");
+  const current = ACTIVE_LINK[ACTIVE_TAB];
+  bar.innerHTML = ["Все", ...labels].map((label) =>
+    `<button type="button" class="link-tab${label === current ? " is-active" : ""}" data-label="${escapeHtml(label)}">${escapeHtml(label)}</button>`
+  ).join("");
+  bar.querySelectorAll(".link-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      ACTIVE_LINK[ACTIVE_TAB] = btn.dataset.label;
+      renderFilterbar(); // список значений в фильтрах (заказ №/модель) зависит от активной ссылки
+      renderTable();
+    });
+  });
+}
+
 function renderTable() {
   const cols = columnsFor(ACTIVE_TAB);
-  const rows = rowsFor(ACTIVE_TAB);
-  const totalForTab = {
-    catalog: STATE.records.length,
-    orderitems: STATE.orders.length,
-    articles: STATE.articles.length,
-    models: STATE.models.length,
-  }[ACTIVE_TAB];
+  let rows = rowsFor(ACTIVE_TAB);
+  rows = applySort(rows, ACTIVE_TAB);
+  const totalForTab = baseDataFor(ACTIVE_TAB).length;
 
+  renderLinkTabs();
+
+  const sortState = SORT[ACTIVE_TAB];
   const thead = document.getElementById("tableHead");
-  thead.innerHTML = "<tr>" + cols.map((c) => `<th>${escapeHtml(c.label)}</th>`).join("") + "</tr>";
+  thead.innerHTML = "<tr>" + cols.map((c) => {
+    const isSorted = sortState && sortState.key === c.key;
+    const arrow = isSorted ? (sortState.dir === "asc" ? "▲" : "▼") : "";
+    return `<th data-key="${escapeHtml(c.key)}" class="${isSorted ? "is-sorted" : ""}">`
+      + `${escapeHtml(c.label)}<span class="sort-arrow">${arrow}</span></th>`;
+  }).join("") + "</tr>";
+  Array.from(thead.querySelectorAll("th")).forEach((th) => {
+    th.addEventListener("click", () => onHeaderClick(ACTIVE_TAB, th.dataset.key));
+  });
 
   const tbody = document.getElementById("tableBody");
   const table = document.getElementById("dataTable");
@@ -311,12 +516,14 @@ function openDetail(row, cols) {
   document.getElementById("modalTitle").textContent =
     ACTIVE_TAB === "catalog" ? "Запись каталога"
     : ACTIVE_TAB === "orderitems" ? "Заказ " + fmtValue(row.order_number)
+    : ACTIVE_TAB === "shipments" ? "Отгрузка " + fmtValue(row.shipment_date) + " — " + fmtValue(row.invoice_number)
+    : ACTIVE_TAB === "marking" ? "Маркировка — заказ " + fmtValue(row.order_number)
     : ACTIVE_TAB === "articles" ? "Артикул " + fmtValue(row.article)
     : "Модель " + fmtValue(row.display_name);
 
   let html = fullFields.map((f) => {
     const v = fmtValue(row[f.key]);
-    const valueHtml = f.key === "status" ? statusPill(v) : (v === "" ? '<span class="empty">—</span>' : escapeHtml(v));
+    const valueHtml = STATUS_LIKE_KEYS.has(f.key) ? statusPill(v) : (v === "" ? '<span class="empty">—</span>' : escapeHtml(v));
     return `<div class="detail-row"><span class="detail-label">${escapeHtml(f.label)}</span><span class="detail-value">${valueHtml}</span></div>`;
   }).join("");
 
@@ -335,11 +542,28 @@ function openDetail(row, cols) {
       "</tbody></table></div>";
   }
 
+  // Отгрузка тоже схлопнута в одну строку (см. aggregate.build_shipment_index) —
+  // здесь показываем полную раскладку по "сырым" строкам этой отгрузки со
+  // всеми колонками исходного листа (по требованию: остальные данные —
+  // только в карточке, не в основной строке).
+  if (ACTIVE_TAB === "shipments") {
+    const detailCols = STATE.meta.shipment_detail_columns || [];
+    const labels = Object.fromEntries((STATE.meta.shipment_fields || []).map((f) => [f.key, f.label]));
+    const items = (STATE.shipment_items || []).filter((it) => it._shipment_key === row.shipment_key);
+    html += `<div class="detail-subtitle">Строк в отгрузке (${items.length})</div>`;
+    html += '<div class="detail-subtable-wrap"><table class="detail-subtable"><thead><tr>' +
+      detailCols.map((k) => `<th>${escapeHtml(labels[k] || k)}</th>`).join("") +
+      "</tr></thead><tbody>" +
+      items.map((it) => "<tr>" + detailCols.map((k) => `<td>${cellHtml(k, it[k])}</td>`).join("") + "</tr>").join("") +
+      "</tbody></table></div>";
+  }
+
   body.innerHTML = html;
 
-  const link = cleanUrl(row.order_link);
+  const link = cleanUrl(row.order_link || row.invoice_link);
+  const linkLabel = row.invoice_link && !row.order_link ? "Открыть ссылку на накладную →" : "Открыть ссылку на заказ →";
   foot.innerHTML = link
-    ? `<a class="link-btn" href="${escapeHtml(link)}" target="_blank" rel="noopener">Открыть ссылку на заказ →</a>`
+    ? `<a class="link-btn" href="${escapeHtml(link)}" target="_blank" rel="noopener">${linkLabel}</a>`
     : "";
 
   overlay.classList.remove("hidden");
